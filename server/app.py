@@ -6,6 +6,7 @@ Compatible with OpenEnv validation and standard clients.
 """
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 from server.environment import DataCleanEnvironment
@@ -40,6 +41,62 @@ class ActionRequest(BaseModel):
 # ============================================================================
 # Endpoints
 # ============================================================================
+
+@app.get("/", response_class=HTMLResponse)
+async def homepage():
+    """Landing page for the DataClean Environment."""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>DataCleanEnv - OpenEnv Data Cleaning Environment</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+            .container { max-width: 700px; padding: 40px; text-align: center; }
+            h1 { font-size: 2.5em; margin-bottom: 10px; background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+            .subtitle { color: #94a3b8; font-size: 1.1em; margin-bottom: 30px; }
+            .badge { display: inline-block; background: #22c55e; color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 0.85em; margin-bottom: 25px; }
+            .endpoints { text-align: left; background: #1e293b; border-radius: 12px; padding: 24px; margin: 20px 0; }
+            .endpoints h3 { color: #38bdf8; margin-bottom: 12px; }
+            .endpoint { padding: 8px 0; border-bottom: 1px solid #334155; font-family: monospace; }
+            .endpoint:last-child { border-bottom: none; }
+            .method { color: #22c55e; font-weight: bold; margin-right: 8px; }
+            .method.post { color: #f59e0b; }
+            .tasks { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
+            .task { background: #1e293b; border-radius: 8px; padding: 16px; flex: 1; }
+            .task h4 { color: #38bdf8; }
+            .task .score { font-size: 1.5em; font-weight: bold; color: #22c55e; }
+            a { color: #38bdf8; text-decoration: none; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 DataCleanEnv</h1>
+            <p class="subtitle">OpenEnv Data Cleaning Environment</p>
+            <div class="badge">● Running</div>
+            <p style="margin-bottom: 20px;">AI agents learn to clean dirty tabular data through step/reset/state API.</p>
+            <div class="tasks">
+                <div class="task"><h4>Easy</h4><div class="score">5</div><div>errors</div></div>
+                <div class="task"><h4>Medium</h4><div class="score">12</div><div>errors</div></div>
+                <div class="task"><h4>Hard</h4><div class="score">20</div><div>errors</div></div>
+            </div>
+            <div class="endpoints">
+                <h3>API Endpoints</h3>
+                <div class="endpoint"><span class="method">GET</span> <a href="/health">/health</a> — Health check</div>
+                <div class="endpoint"><span class="method post">POST</span> /reset — Reset environment</div>
+                <div class="endpoint"><span class="method post">POST</span> /step — Execute action</div>
+                <div class="endpoint"><span class="method">GET</span> <a href="/state">/state</a> — Get state</div>
+                <div class="endpoint"><span class="method">GET</span> <a href="/grade">/grade</a> — Grade episode</div>
+                <div class="endpoint"><span class="method">GET</span> <a href="/tasks">/tasks</a> — List tasks</div>
+                <div class="endpoint"><span class="method">GET</span> <a href="/docs">/docs</a> — API documentation</div>
+            </div>
+            <p style="margin-top: 20px; color: #64748b; font-size: 0.9em;">Built for the Meta × HuggingFace OpenEnv Hackathon</p>
+        </div>
+    </body>
+    </html>
+    """
+
 
 @app.get("/health")
 async def health():
