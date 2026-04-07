@@ -1,3 +1,15 @@
+---
+title: DataCleanEnv
+emoji: 📊
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+tags:
+  - openenv
+---
+
 # 📊 DataCleanEnv — Data Cleaning OpenEnv Environment
 
 > Train AI agents to clean dirty tabular data through the OpenEnv step/reset/state API.
