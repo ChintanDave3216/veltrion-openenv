@@ -1,14 +1,18 @@
 """
 Baseline Inference Script for DataCleanEnv.
 
-Uses the OpenAI API client to run an LLM agent against the data cleaning environment.
+Uses the OpenAI Python client (`from openai import OpenAI`) to run an LLM agent
+against the data cleaning environment.
 Reads API credentials from environment variables.
 Produces reproducible baseline scores on all 3 tasks.
 
 Required environment variables:
     API_BASE_URL  - The API endpoint for the LLM (default: https://api.openai.com/v1)
     MODEL_NAME    - The model identifier (default: gpt-4o-mini)
-    HF_TOKEN      - Your API key (also checks OPENAI_API_KEY)
+    HF_TOKEN      - Your HuggingFace / API token (no default — must be set)
+
+Optional:
+    LOCAL_IMAGE_NAME - Docker image name when using from_docker_image()
 
 Usage:
     # Set environment variables first, then:
@@ -31,14 +35,18 @@ from openai import OpenAI
 
 # ============================================================================
 # CONFIGURATION — Read from environment variables
+# Defaults are set ONLY for API_BASE_URL and MODEL_NAME (not HF_TOKEN)
 # ============================================================================
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-API_KEY = os.environ.get("OPENAI_API_KEY") or os.environ.get("HF_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+# Optional — if you use from_docker_image():
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 # Environment configuration
-ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:8000")
 BENCHMARK = "data_clean_env"
 TASKS = ["easy", "medium", "hard"]
 MAX_STEPS_MAP = {"easy": 15, "medium": 25, "hard": 35}
@@ -276,9 +284,9 @@ def run_task(client: OpenAI, env: EnvClient, task_id: str) -> float:
 def main() -> None:
     """Main entry point — runs all 3 tasks and reports scores."""
 
-    if not API_KEY:
-        print("[ERROR] No API key found. Set OPENAI_API_KEY or HF_TOKEN environment variable.", flush=True)
-        print("[INFO] Example: export OPENAI_API_KEY='sk-...'", flush=True)
+    if not HF_TOKEN:
+        print("[ERROR] No API key found. Set HF_TOKEN environment variable.", flush=True)
+        print("[INFO] Example: export HF_TOKEN='hf_...'", flush=True)
         sys.exit(1)
 
     print(f"[INFO] DataCleanEnv Baseline Inference", flush=True)
@@ -288,8 +296,8 @@ def main() -> None:
     print(f"[INFO] Tasks: {TASKS}", flush=True)
     print("", flush=True)
 
-    # Initialize OpenAI client
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    # Initialize OpenAI client (using HF_TOKEN as api_key)
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
     # Initialize environment client
     env = EnvClient(base_url=ENV_BASE_URL)
