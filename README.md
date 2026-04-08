@@ -113,23 +113,23 @@ Each observation returns:
 ### Prerequisites
 - Python 3.10+
 - Docker (for containerized deployment)
-- An OpenAI-compatible API key
+- An OpenAI-compatible API key (set as `HF_TOKEN`)
 
 ### Local Development
 
 ```bash
 # Clone the repo
-git clone <repo-url>
-cd data-clean-env
+git clone https://github.com/ChintanDave3216/veltrion-openenv.git
+cd veltrion-openenv
 
 # Install dependencies
 pip install -r server/requirements.txt
 
 # Run the server
-cd server && uvicorn app:app --host 0.0.0.0 --port 8000
+python -m uvicorn server.app:app --host 0.0.0.0 --port 8000
 
 # In another terminal, run inference
-export OPENAI_API_KEY="your-key-here"
+export HF_TOKEN="your-token-here"
 export API_BASE_URL="https://api.openai.com/v1"
 export MODEL_NAME="gpt-4o-mini"
 python inference.py
@@ -138,14 +138,14 @@ python inference.py
 ### Docker
 
 ```bash
-# Build
-docker build -t data-clean-env:latest -f server/Dockerfile .
+# Build (using root Dockerfile for HF Spaces)
+docker build -t data-clean-env:latest .
 
 # Run
-docker run -p 8000:8000 data-clean-env:latest
+docker run -p 7860:7860 data-clean-env:latest
 
 # Test health
-curl http://localhost:8000/health
+curl http://localhost:7860/health
 ```
 
 ### Run Tests
@@ -158,51 +158,66 @@ pytest tests/ -v
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `OPENAI_API_KEY` | ✅ | — | Your OpenAI API key |
+| `HF_TOKEN` | ✅ | — | Your API token (HuggingFace or OpenAI-compatible) |
 | `API_BASE_URL` | ❌ | `https://api.openai.com/v1` | LLM API endpoint |
 | `MODEL_NAME` | ❌ | `gpt-4o-mini` | Model to use |
-| `HF_TOKEN` | ❌ | — | HuggingFace token (alternative to OPENAI_API_KEY) |
+| `LOCAL_IMAGE_NAME` | ❌ | — | Docker image name (optional, for `from_docker_image()`) |
 | `ENV_BASE_URL` | ❌ | `http://localhost:8000` | Environment server URL |
 
 ## 📊 Baseline Scores
 
+Tested with Llama 3.3 70B via OpenAI-compatible API:
+
 | Task | Score | Steps | Model |
 |---|---|---|---|
-| Easy | ~0.70 | 8 | gpt-4o-mini |
-| Medium | ~0.40 | 18 | gpt-4o-mini |
-| Hard | ~0.20 | 30 | gpt-4o-mini |
-| **Average** | **~0.43** | — | — |
+| Easy | **1.0000** | 6 | llama-3.3-70b-versatile |
+| Medium | **0.6667** | 22 | llama-3.3-70b-versatile |
+| Hard | **0.5000** | 15 | llama-3.3-70b-versatile |
+| **Average** | **0.7222** | — | — |
 
 ## 📁 Project Structure
 
 ```
-data-clean-env/
+veltrion-openenv/
 ├── openenv.yaml              # OpenEnv manifest
-├── pyproject.toml             # Dependencies
+├── pyproject.toml             # Dependencies & metadata
+├── uv.lock                    # Dependency lock file
 ├── inference.py               # Baseline inference script
+├── Dockerfile                 # HF Spaces Dockerfile (port 7860)
 ├── README.md                  # This file
 ├── __init__.py                # Package exports
+├── .gitignore                 # Git exclusions
+├── .dockerignore              # Docker build exclusions
 ├── server/
-│   ├── app.py                 # FastAPI server
+│   ├── app.py                 # FastAPI server + landing page
 │   ├── environment.py         # Core environment logic
 │   ├── data_generator.py      # Dirty data generation engine
-│   ├── graders.py             # Task graders
+│   ├── graders.py             # Task graders (Easy/Medium/Hard)
 │   ├── requirements.txt       # Server dependencies
-│   └── Dockerfile             # Container definition
+│   ├── Dockerfile             # Standalone Docker (port 8000)
+│   └── __init__.py            # Server package init
 └── tests/
-    └── test_environment.py    # Unit tests
+    ├── test_environment.py    # 25 unit tests
+    └── __init__.py            # Test package init
 ```
 
 ## 🏆 Hackathon Submission
 
-This environment is built for the **Meta × HuggingFace OpenEnv Hackathon**.
+This environment is built for the **Meta × HuggingFace OpenEnv Hackathon** by **Team Veltrion**.
+
+- **GitHub**: https://github.com/ChintanDave3216/veltrion-openenv
+- **HuggingFace Space**: https://huggingface.co/spaces/chintan-dave/data-clean-env
 
 ### Pre-submission checklist
 - [x] HF Space deploys and responds to `reset()`
 - [x] OpenEnv spec compliance (`openenv.yaml`, typed models)
 - [x] Dockerfile builds cleanly
-- [x] Baseline inference script produces scores
-- [x] 3+ tasks with deterministic graders (scores in 0.0–1.0)
+- [x] `openenv validate` passes: `[OK] Ready for multi-mode deployment`
+- [x] Baseline inference script produces scores (avg: 0.72)
+- [x] 3 tasks with deterministic graders (scores in 0.0–1.0)
+- [x] 25 unit tests passing
+- [x] `inference.py` uses `from openai import OpenAI` with `HF_TOKEN`
+- [x] Structured logs: `[START]`, `[STEP]`, `[END]`
 
 ## License
 
