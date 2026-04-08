@@ -14,6 +14,17 @@ from server.data_generator import generate_clean_dataset, inject_errors, TASK_CO
 from server.graders import grade_task
 
 
+def obs_to_dict(obs):
+    """Convert DataCleanObservation to dict for backward compat."""
+    if isinstance(obs, dict):
+        return obs
+    return {
+        "done": obs.done,
+        "reward": obs.reward,
+        "metadata": obs.metadata,
+    }
+
+
 class TestDataGenerator:
     """Tests for the data generation engine."""
 
@@ -53,7 +64,6 @@ class TestDataGenerator:
         clean = generate_clean_dataset(25, seed=42)
         dirty, manifest = inject_errors(clean, "medium", seed=42)
         assert len(manifest) == 12
-        # Should have 2 extra rows (duplicates)
         assert len(dirty) == 27
 
     def test_hard_error_injection(self):
@@ -88,8 +98,8 @@ class TestEnvironment:
         self.env = DataCleanEnvironment()
 
     def test_reset_returns_observation(self):
-        """Reset returns a valid observation dict."""
-        obs = self.env.reset(task_id="easy", seed=42)
+        """Reset returns a valid observation."""
+        obs = obs_to_dict(self.env.reset(task_id="easy", seed=42))
         assert "done" in obs
         assert "reward" in obs
         assert "metadata" in obs
@@ -98,7 +108,7 @@ class TestEnvironment:
 
     def test_reset_metadata_fields(self):
         """Reset observation contains all required metadata."""
-        obs = self.env.reset(task_id="easy", seed=42)
+        obs = obs_to_dict(self.env.reset(task_id="easy", seed=42))
         meta = obs["metadata"]
         assert "task_id" in meta
         assert "task_description" in meta
@@ -114,14 +124,13 @@ class TestEnvironment:
         """Reset produces clean state with no prior data leakage."""
         self.env.reset(task_id="easy", seed=42)
         self.env.step({"action_type": "done"})
-        obs = self.env.reset(task_id="medium", seed=42)
+        obs = obs_to_dict(self.env.reset(task_id="medium", seed=42))
         assert obs["done"] is False
         assert obs["metadata"]["task_id"] == "medium"
 
     def test_step_fix_value(self):
         """Fixing a known error gives positive reward."""
-        obs = self.env.reset(task_id="easy", seed=42)
-        # Find the first error from the manifest
+        self.env.reset(task_id="easy", seed=42)
         err = self.env._error_manifest[0]
         action = {
             "action_type": "fix_value",
@@ -129,26 +138,31 @@ class TestEnvironment:
             "column_name": err["col"],
             "new_value": err["clean_value"],
         }
-        obs = self.env.step(action)
+        obs = obs_to_dict(self.env.step(action))
         assert obs["reward"] > 0
 
     def test_step_invalid_action(self):
         """Invalid action type gives penalty."""
         self.env.reset(task_id="easy", seed=42)
-        obs = self.env.step({"action_type": "invalid_action"})
+        obs = obs_to_dict(self.env.step({"action_type": "invalid_action"}))
         assert obs["reward"] < 0
 
     def test_step_done_action(self):
         """Done action ends the episode."""
         self.env.reset(task_id="easy", seed=42)
-        obs = self.env.step({"action_type": "done"})
+        obs = obs_to_dict(self.env.step({"action_type": "done"}))
         assert obs["done"] is True
 
     def test_max_steps_terminates(self):
         """Episode terminates after max steps."""
         self.env.reset(task_id="easy", seed=42)
-        for i in range(20):  # More than max_steps (15)
-            obs = self.env.step({"action_type": "fix_value", "row_index": 0, "column_name": "name", "new_value": "test"})
+        for i in range(20):
+            obs = obs_to_dict(self.env.step({
+                "action_type": "fix_value",
+                "row_index": 0,
+                "column_name": "name",
+                "new_value": "test",
+            }))
             if obs["done"]:
                 break
         assert obs["done"] is True
@@ -166,18 +180,17 @@ class TestEnvironment:
     def test_delete_duplicate_row(self):
         """Deleting a duplicate row gives positive reward."""
         self.env.reset(task_id="medium", seed=42)
-        # Find a duplicate error
         for err in self.env._error_manifest:
             if err["error_type"] == "duplicate_row":
                 action = {"action_type": "delete_row", "row_index": err["row"]}
-                obs = self.env.step(action)
+                obs = obs_to_dict(self.env.step(action))
                 assert obs["reward"] > 0
                 break
 
     def test_delete_valid_row_penalized(self):
         """Deleting a non-duplicate row gives penalty."""
         self.env.reset(task_id="easy", seed=42)
-        obs = self.env.step({"action_type": "delete_row", "row_index": 0})
+        obs = obs_to_dict(self.env.step({"action_type": "delete_row", "row_index": 0}))
         assert obs["reward"] < 0
 
     def test_fix_all_errors_terminates(self):
@@ -200,10 +213,23 @@ class TestEnvironment:
         """Rewards stay in reasonable range."""
         self.env.reset(task_id="easy", seed=42)
         for i in range(15):
-            obs = self.env.step({"action_type": "fix_value", "row_index": 0, "column_name": "name", "new_value": "X"})
+            obs = obs_to_dict(self.env.step({
+                "action_type": "fix_value",
+                "row_index": 0,
+                "column_name": "name",
+                "new_value": "X",
+            }))
             assert -1.0 <= obs["reward"] <= 1.0
             if obs["done"]:
                 break
+
+    def test_state_property(self):
+        """State property returns State object."""
+        self.env.reset(task_id="easy", seed=42)
+        state = self.env.state
+        assert hasattr(state, "episode_id")
+        assert hasattr(state, "step_count")
+        assert state.step_count == 0
 
 
 class TestGraders:
