@@ -62,6 +62,17 @@ class DataCleanEnvironment(Environment):
         self._last_action_result = ""
         self._cumulative_reward = 0.0
 
+    def _apply_rubric(self, action, observation) -> float:
+        """Apply rubric to get the task score.
+        
+        CRITICAL: The base class returns 0.0 when no rubric is set.
+        The evaluator calls this method to get the task score.
+        We override it to return a score clamped to (0, 1) open interval.
+        """
+        score = self._calculate_score()
+        # Clamp to (0, 1) — evaluator rejects 0.0 and 1.0
+        return max(0.01, min(0.99, score))
+
     def reset(self, task_id: str = "easy", seed: int = 42, **kwargs) -> DataCleanObservation:
         """
         Reset the environment with a new dirty dataset.
