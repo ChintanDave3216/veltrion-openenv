@@ -140,8 +140,8 @@ class DataCleanEnvironment(Environment):
         if action_type == "done":
             self._done = True
             score = self._calculate_score()
-            if score >= 0.8:
-                reward = 0.1
+            # Reward for done = the task score itself (already clamped to (0,1))
+            reward = score
             self._last_action_result = f"Agent finished. Final score: {score:.3f}"
 
         elif action_type == "delete_row":
