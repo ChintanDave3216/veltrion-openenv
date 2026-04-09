@@ -321,7 +321,13 @@ class DataCleanEnvironment(Environment):
         return min(max(score, 0.001), 0.999)
 
     def _build_observation(self, reward: float) -> DataCleanObservation:
-        """Build the observation returned to the agent."""
+        """Build the observation returned to the agent.
+        
+        All rewards are clamped to (0, 1) open interval as required by evaluator.
+        """
+        # Clamp reward to (0, 1) open interval — evaluator rejects 0.0 and 1.0
+        clamped_reward = round(min(max(reward, 0.001), 0.999), 4)
+        
         # Build visible data (exclude deleted rows)
         visible_data = []
         for i, row in enumerate(self._current_data):
@@ -332,7 +338,7 @@ class DataCleanEnvironment(Environment):
 
         return DataCleanObservation(
             done=self._done,
-            reward=round(reward, 4),
+            reward=clamped_reward,
             metadata={
                 "task_id": self._task_id,
                 "task_description": config["description"],

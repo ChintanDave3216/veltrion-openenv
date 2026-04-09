@@ -104,7 +104,7 @@ class TestEnvironment:
         assert "reward" in obs
         assert "metadata" in obs
         assert obs["done"] is False
-        assert obs["reward"] == 0.0
+        assert obs["reward"] == 0.001  # Clamped: never exactly 0.0
 
     def test_reset_metadata_fields(self):
         """Reset observation contains all required metadata."""
@@ -145,7 +145,7 @@ class TestEnvironment:
         """Invalid action type gives penalty."""
         self.env.reset(task_id="easy", seed=42)
         obs = obs_to_dict(self.env.step({"action_type": "invalid_action"}))
-        assert obs["reward"] < 0
+        assert obs["reward"] == 0.001  # Clamped: negative rewards become 0.001
 
     def test_step_done_action(self):
         """Done action ends the episode."""
@@ -191,7 +191,7 @@ class TestEnvironment:
         """Deleting a non-duplicate row gives penalty."""
         self.env.reset(task_id="easy", seed=42)
         obs = obs_to_dict(self.env.step({"action_type": "delete_row", "row_index": 0}))
-        assert obs["reward"] < 0
+        assert obs["reward"] == 0.001  # Clamped: negative rewards become 0.001
 
     def test_fix_all_errors_terminates(self):
         """Fixing all errors ends the episode."""
