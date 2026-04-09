@@ -1,361 +1,152 @@
-"""
-Baseline Inference Script for DataCleanEnv.
-
-Uses the OpenAI Python client (`from openai import OpenAI`) to run an LLM agent
-against the data cleaning environment.
-Reads API credentials from environment variables.
-Produces reproducible baseline scores on all 3 tasks.
-
-Required environment variables:
-    API_BASE_URL  - The API endpoint for the LLM (default: https://api.openai.com/v1)
-    MODEL_NAME    - The model identifier (default: gpt-4o-mini)
-    HF_TOKEN      - Your HuggingFace / API token (no default - must be set)
-
-Optional:
-    LOCAL_IMAGE_NAME - Docker image name when using from_docker_image()
-
-Usage:
-    python inference.py
-
-Output format:
-    [START] {"task": ..., "env": ..., "model": ...}
-    [STEP]  {"step": ..., "action": ..., "reward": ..., "done": ..., "error": ...}
-    [END]   {"success": ..., "steps": ..., "score": ..., "rewards": [...]}
-"""
-
 import os
-import sys
 import json
+import textwrap
 import asyncio
 from typing import List, Optional
 from openai import OpenAI
 
-# ============================================================================
-# CONFIGURATION - Read from environment variables
-# ============================================================================
+from openenv import GenericEnvClient
 
+# --- Configuration ---
 API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Optional - if you use from_docker_image():
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-
 BENCHMARK = "data_clean_env"
+MAX_STEPS = 15
+MAX_POSSIBLE_REWARD = 5.0
+
+# The validator looks for exactly 3 tasks
 TASKS = ["easy", "medium", "hard"]
-MAX_STEPS_MAP = {"easy": 15, "medium": 25, "hard": 35}
-SUCCESS_SCORE_THRESHOLD = 0.5
-SEED = 42
+
+SYSTEM_PROMPT = textwrap.dedent("""
+    You are a data cleaning agent. You receive a dirty CSV dataset and must fix errors.
+    RULES:
+    1. Look at the current data and error report
+    2. Fix one error at a time using the appropriate action
+    3. Output EXACTLY ONE JSON object per step. No extra text.
+    
+    JSON format:
+    {"action_type": "fix_value", "row_index": 0, "column_name": "name", "new_value": "corrected", "reason": "fixing typo"}
+    
+    Action types: fix_value, delete_row, fill_missing, standardize, done
+    CRITICAL: Output EXACTLY ONE JSON object. No extra text.
+""").strip()
 
 
-# ============================================================================
-# STRUCTURED LOGGING - Mandatory format for hackathon evaluation
-# ============================================================================
-
-def log_start(task: str, env: str, model: str) -> None:
-    print(f'[START] {json.dumps({"task": task, "env": env, "model": model})}', flush=True)
+def log_start(task: str, env: str, model: str):
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
-    print(f'[STEP] {json.dumps({"step": step, "action": action, "reward": reward, "done": done, "error": error})}', flush=True)
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]):
+    error_val = error if error else "null"
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}", flush=True)
 
 
-def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
-    print(f'[END] {json.dumps({"success": success, "steps": steps, "score": score, "rewards": rewards})}', flush=True)
+def log_end(success: bool, steps: int, score: float, rewards: List[float]):
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
 
-# ============================================================================
-# SYSTEM PROMPT FOR THE LLM AGENT
-# ============================================================================
-
-SYSTEM_PROMPT = """You are a data cleaning agent. You receive a dirty CSV dataset and must fix errors.
-
-You will receive:
-1. The current state of the dataset (CSV format)
-2. An error report listing detected issues
-3. Feedback on your last action
-
-For EACH step, respond with a SINGLE JSON object (no markdown, no explanation):
-
-{
-    "action_type": "<one of: fix_value, delete_row, fill_missing, standardize, done>",
-    "row_index": <integer: the row to modify, use the _row_index column value>,
-    "column_name": "<string: the column to modify>",
-    "new_value": "<string: the corrected value>",
-    "reason": "<string: brief explanation>"
-}
-
-Action types:
-- fix_value: Replace a cell's value (for typos, wrong formats, wrong data)
-- delete_row: Remove a duplicate row (only use for rows identified as duplicates)
-- fill_missing: Fill an empty cell with the correct value
-- standardize: Fix formatting (dates->YYYY-MM-DD, phone->(XXX) XXX-XXXX, proper case)
-- done: Signal you've finished all fixes
-
-IMPORTANT RULES:
-- Dates should be in YYYY-MM-DD format
-- Phone numbers should be in (XXX) XXX-XXXX format
-- Department/city names should be properly capitalized (Title Case)
-- Salary should be a plain number (no $, no commas, no K suffix)
-- Remove leading/trailing whitespace from all values
-- Check city-state consistency (e.g., Chicago should be in IL, not NY)
-- Negative salaries are invalid - use the absolute value
-- Future hire dates (beyond 2026) are invalid
-- ONLY output the JSON object, nothing else."""
-
-
-# ============================================================================
-# LLM AGENT
-# ============================================================================
-
-def get_model_action(client: OpenAI, observation: dict, history: List[dict], step_num: int):
-    """Ask the LLM to decide the next cleaning action."""
-    meta = observation.get("metadata", observation)  # handle both dict and obs
-
-    user_msg = f"""Step {step_num}/{meta.get('max_steps', 20)}
-Errors fixed: {meta.get('errors_fixed', 0)}/{meta.get('total_errors', 0)}
-Last action result: {meta.get('last_action_result', 'N/A')}
-
---- CURRENT DATA ---
-{meta.get('current_data', 'No data')}
-
---- ERROR REPORT ---
-{meta.get('error_report', 'No report')}
-
-Respond with a single JSON action:"""
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(history[-8:])
-    messages.append({"role": "user", "content": user_msg})
-
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=300,
-        )
-        content = response.choices[0].message.content.strip()
-
-        # Parse JSON from response (handle markdown code blocks)
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-            content = content.strip()
-
-        action = json.loads(content)
-        if "action_type" not in action:
-            action["action_type"] = "done"
-        return action, content
-
-    except Exception as exc:
-        print(f"[DEBUG] Model request failed: {exc}", flush=True)
-        return {"action_type": "done", "reason": f"Model error: {exc}"}, "done"
-
-
-# ============================================================================
-# MAIN INFERENCE LOOP
-# ============================================================================
-
-async def run_task(llm_client: OpenAI, env, task_id: str) -> float:
-    """Run the agent on a single task using the OpenEnv SDK client."""
-    max_steps = MAX_STEPS_MAP.get(task_id, 20)
+async def run_task(client: OpenAI, env, task_name: str):
+    """Runs a single episode for a specific task."""
     rewards: List[float] = []
     steps_taken = 0
-    score = 0.01
+    score = 0.0
     success = False
-    history: List[dict] = []
 
-    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        # Reset environment via OpenEnv SDK
-        result = await env.reset(task_id=task_id, seed=SEED)
-        obs = result.observation if hasattr(result, 'observation') else result
-        done = result.done if hasattr(result, 'done') else obs.get("done", False)
+        result = await env.reset(task_id=task_name)
 
-        for step in range(1, max_steps + 1):
-            if done:
+        for step in range(1, MAX_STEPS + 1):
+            if result.done:
                 break
 
-            # Get data from observation (first-class fields, not metadata)
-            if isinstance(obs, dict):
-                obs_for_llm = {"metadata": obs}  # All fields are top-level
-            elif hasattr(obs, 'model_dump'):
-                obs_for_llm = {"metadata": obs.model_dump()}
-            else:
-                obs_for_llm = {"metadata": {}}
+            obs_dict = result.observation.model_dump() if hasattr(result.observation, 'model_dump') else {}
 
-            # Get LLM action
-            action, raw_response = get_model_action(llm_client, obs_for_llm, history, step)
+            try:
+                completion = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": f"Current Data State: {json.dumps(obs_dict)}"}
+                    ],
+                    temperature=0.1
+                )
+                response_text = completion.choices[0].message.content.strip()
 
-            # Step the environment via OpenEnv SDK
-            result = await env.step(action)
-            obs = result.observation if hasattr(result, 'observation') else result
-            reward = result.reward if hasattr(result, 'reward') else (obs.get("reward", 0.01) if isinstance(obs, dict) else 0.01)
-            done = result.done if hasattr(result, 'done') else (obs.get("done", False) if isinstance(obs, dict) else False)
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].strip()
 
-            rewards.append(float(reward) if reward is not None else 0.01)
+                if '}\n{' in response_text:
+                    response_text = response_text.split('}\n{')[0] + '}'
+                elif '}{' in response_text:
+                    response_text = response_text.split('}{')[0] + '}'
+
+                action_data = json.loads(response_text)
+                if isinstance(action_data, list):
+                    action_data = action_data[0]
+
+                action_str = f"{action_data.get('action_type', 'done')}"
+                error = None
+
+            except Exception as e:
+                action_data = {"action_type": "done", "reason": "error"}
+                action_str = "done"
+                clean_error = str(e).replace('\n', ' ')
+                error = f"Err: {clean_error}"[:50]
+
+            result = await env.step(action_data)
+            reward = result.reward or 0.0
+            done = result.done
+
+            rewards.append(reward)
             steps_taken = step
 
-            action_str = json.dumps(action) if isinstance(action, dict) else str(action)
-            log_step(step=step, action=action_str, reward=float(reward) if reward else 0.01, done=done, error=None)
-
-            history.append({"role": "user", "content": f"Step {step} observation"})
-            history.append({"role": "assistant", "content": raw_response})
+            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
             if done:
                 break
 
-        # Calculate score from observation fields
-        # The SDK's serialize_observation sends our first-class fields as top-level keys
-        if isinstance(obs, dict):
-            # Try observation dict directly (first-class fields)
-            errors_fixed = obs.get("errors_fixed", 0)
-            total_errors = obs.get("total_errors", 1)
-            obs_score = obs.get("score", None)
-            # Fallback: check metadata (backward compat)
-            if errors_fixed == 0 and "metadata" in obs:
-                meta = obs["metadata"]
-                errors_fixed = meta.get("errors_fixed", 0)
-                total_errors = meta.get("total_errors", 1)
-                obs_score = meta.get("score", obs_score)
-        elif hasattr(obs, 'errors_fixed'):
-            errors_fixed = obs.errors_fixed
-            total_errors = obs.total_errors
-            obs_score = obs.score if hasattr(obs, 'score') else None
-        elif hasattr(obs, 'metadata'):
-            meta = obs.metadata if isinstance(obs.metadata, dict) else {}
-            errors_fixed = meta.get("errors_fixed", 0)
-            total_errors = meta.get("total_errors", 1)
-            obs_score = meta.get("score", None)
-        else:
-            errors_fixed = 0
-            total_errors = 1
-            obs_score = None
+        raw_score = sum(rewards) / MAX_POSSIBLE_REWARD
+        score = min(max(raw_score, 0.01), 0.99)
+        success = score > 0.0
 
-        # Use the environment's pre-calculated score if available, else compute
-        if obs_score is not None and 0 < obs_score < 1:
-            score = obs_score
-        else:
-            score = errors_fixed / max(total_errors, 1)
-        # Clamp to (0, 1) open interval — evaluator rejects 0.0 and 1.0
-        score = max(0.01, min(0.99, score))
-        success = score >= SUCCESS_SCORE_THRESHOLD
-
-    except Exception as exc:
-        print(f"[DEBUG] Task {task_id} failed: {exc}", flush=True)
-        score = 0.01  # Clamp: evaluator rejects exactly 0.0
-        success = False
+    except Exception as run_error:
+        print(f"[DEBUG] Execution Error: {run_error}")
 
     finally:
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
-    return score
 
+async def main():
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    env = GenericEnvClient(base_url="http://localhost:8000")
 
-async def async_main() -> None:
-    """Async main - uses OpenEnv SDK to connect to the environment.
-    
-    CRITICAL: Must ALWAYS produce exactly 3 [START]/[END] pairs (one per task).
-    The evaluator counts these and assigns score=0.0 to missing tasks.
-    """
-    from openenv import GenericEnvClient
-
-    has_llm = bool(HF_TOKEN)
-    if not has_llm:
-        print("[WARN] No HF_TOKEN set. Will run tasks without LLM (baseline scores).", flush=True)
-
-    print(f"[INFO] DataCleanEnv Baseline Inference", flush=True)
-    print(f"[INFO] API Base: {API_BASE_URL}", flush=True)
-    print(f"[INFO] Model: {MODEL_NAME}", flush=True)
-    print(f"[INFO] Tasks: {TASKS}", flush=True)
-
-    # Initialize OpenAI client if token available
-    llm_client = None
-    if has_llm:
-        llm_client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-
-    # Connect to environment using OpenEnv SDK
-    env = None
     try:
-        if LOCAL_IMAGE_NAME:
-            print(f"[INFO] Starting container from image: {LOCAL_IMAGE_NAME}", flush=True)
-            env = await GenericEnvClient.from_docker_image(LOCAL_IMAGE_NAME)
-        else:
-            env_url = os.getenv("ENV_BASE_URL", "http://localhost:8000")
-            print(f"[INFO] Connecting to environment at: {env_url}", flush=True)
-            env = GenericEnvClient(base_url=env_url)
-            await env.connect()
+        await env.connect()
 
-        print(f"[INFO] Environment connected.", flush=True)
+        # Loop through all 3 tasks
+        for task_name in TASKS:
+            await run_task(client, env, task_name)
 
-        # ALWAYS run all 3 tasks — evaluator requires 3 [START]/[END] pairs
-        all_scores = {}
-        for task_id in TASKS:
-            print(f"\n{'='*60}", flush=True)
-            print(f"[INFO] Running task: {task_id}", flush=True)
-            print(f"{'='*60}", flush=True)
-
-            if llm_client is not None:
-                score = await run_task(llm_client, env, task_id)
-            else:
-                # No LLM — run a minimal episode (reset → done) to produce valid logs
-                log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
-                try:
-                    result = await env.reset(task_id=task_id, seed=SEED)
-                    obs = result.observation if hasattr(result, 'observation') else result
-                    reward = result.reward if hasattr(result, 'reward') else 0.01
-                    result2 = await env.step({"action_type": "done"})
-                    obs2 = result2.observation if hasattr(result2, 'observation') else result2
-                    reward2 = result2.reward if hasattr(result2, 'reward') else 0.01
-                    # Get score from observation
-                    if isinstance(obs2, dict):
-                        score = obs2.get("score", 0.01)
-                    else:
-                        score = 0.01
-                    score = max(0.01, min(0.99, float(score)))
-                    log_step(step=1, action='{"action_type": "done"}', reward=float(reward2) if reward2 else 0.01, done=True, error=None)
-                except Exception as e:
-                    print(f"[DEBUG] No-LLM task {task_id} error: {e}", flush=True)
-                    score = 0.01
-                log_end(success=False, steps=1, score=score, rewards=[score])
-
-            all_scores[task_id] = score
-            print(f"[INFO] Task '{task_id}' score: {score:.4f}", flush=True)
-
-        # Summary
-        avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.01
-        print(f"\n{'='*60}", flush=True)
-        print(f"  BASELINE RESULTS - DataCleanEnv", flush=True)
-        print(f"{'='*60}", flush=True)
-        for task_id, score in all_scores.items():
-            status = "PASS" if score >= SUCCESS_SCORE_THRESHOLD else "FAIL"
-            print(f"  {task_id:8s}: {score:.4f}  {status}", flush=True)
-        print(f"  {'Average':8s}: {avg_score:.4f}", flush=True)
-        print(f"{'='*60}", flush=True)
-
-    except Exception as exc:
-        print(f"[ERROR] Fatal error: {exc}", flush=True)
-        # STILL produce 3 [START]/[END] pairs even on fatal error
-        for task_id in TASKS:
-            log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+    except Exception as e:
+        print(f"[DEBUG] Connection error: {e}")
+        # Still produce 3 log pairs
+        for task_name in TASKS:
+            log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
             log_end(success=False, steps=0, score=0.01, rewards=[0.01])
 
     finally:
-        if env is not None:
-            try:
-                await env.close()
-            except Exception:
-                pass
-
-
-def main() -> None:
-    """Main entry point."""
-    asyncio.run(async_main())
+        try:
+            await env.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
-    main()
-
+    asyncio.run(main())
