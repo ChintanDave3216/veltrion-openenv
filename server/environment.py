@@ -324,8 +324,10 @@ class DataCleanEnvironment(Environment):
         """Build the observation returned to the agent.
 
         All rewards are clamped to (0, 1) open interval as required by evaluator.
-        Data is stored as first-class fields (not metadata) so serialize_observation()
-        includes them in the response sent to clients.
+
+        CRITICAL: Only score-like fields (always in (0,1)) and strings are
+        first-class fields. Integer counts (errors_fixed=0, step_count=0) go in
+        metadata (excluded from serialization) so the evaluator never sees them.
         """
         # Clamp reward to (0, 1) open interval — evaluator rejects 0.0 and 1.0
         clamped_reward = round(min(max(reward, 0.01), 0.99), 4)
@@ -341,31 +343,30 @@ class DataCleanEnvironment(Environment):
         return DataCleanObservation(
             done=self._done,
             reward=clamped_reward,
-            # First-class fields (sent to client via serialize_observation)
+            # First-class fields (visible in serialized observation)
+            # ONLY score (always 0.01-0.99) and text fields here
+            score=self._calculate_score(),
             task_id=self._task_id,
             task_description=config["description"],
             current_data=format_as_csv(visible_data),
             error_report=generate_error_report(
                 self._dirty_data, self._error_manifest
             ),
-            columns=(
-                list(self._current_data[0].keys())
-                if self._current_data
-                else []
-            ),
-            total_rows=len(visible_data),
-            errors_remaining=self._total_errors - len(self._fixed_errors),
-            errors_fixed=len(self._fixed_errors),
-            total_errors=self._total_errors,
             last_action_result=self._last_action_result,
-            score=self._calculate_score(),
-            step_count=self._state_obj.step_count,
-            max_steps=self._max_steps,
-            # Also keep in metadata for backward compatibility
+            # Integer counts go in metadata (excluded from wire format by SDK)
             metadata={
                 "task_id": self._task_id,
+                "columns": (
+                    list(self._current_data[0].keys())
+                    if self._current_data
+                    else []
+                ),
+                "total_rows": len(visible_data),
+                "errors_remaining": self._total_errors - len(self._fixed_errors),
                 "errors_fixed": len(self._fixed_errors),
                 "total_errors": self._total_errors,
                 "score": self._calculate_score(),
+                "step_count": self._state_obj.step_count,
+                "max_steps": self._max_steps,
             },
         )
