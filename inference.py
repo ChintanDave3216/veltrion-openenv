@@ -221,11 +221,13 @@ async def run_task(llm_client: OpenAI, env, task_id: str) -> float:
         errors_fixed = meta.get("errors_fixed", 0)
         total_errors = meta.get("total_errors", 1)
         score = errors_fixed / max(total_errors, 1)
+        # Clamp to (0, 1) open interval — evaluator rejects 0.0 and 1.0
+        score = max(0.001, min(0.999, score))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
         print(f"[DEBUG] Task {task_id} failed: {exc}", flush=True)
-        score = 0.0
+        score = 0.001  # Clamp: evaluator rejects exactly 0.0
         success = False
 
     finally:
