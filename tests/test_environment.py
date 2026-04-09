@@ -241,7 +241,7 @@ class TestGraders:
         env.reset(task_id="easy", seed=42)
         env.step({"action_type": "done"})
         result = grade_task("easy", env.get_state())
-        assert result["score"] == 0.0
+        assert result["score"] == 0.001  # Clamped: never exactly 0.0
 
     def test_grader_perfect_score(self):
         """All errors fixed = 1.0 score."""
@@ -258,7 +258,7 @@ class TestGraders:
                     "new_value": err["clean_value"],
                 })
         result = grade_task("easy", env.get_state())
-        assert result["score"] == 1.0
+        assert result["score"] == 0.999  # Clamped: never exactly 1.0
 
     def test_grader_partial_score(self):
         """Fixing some errors = partial score."""

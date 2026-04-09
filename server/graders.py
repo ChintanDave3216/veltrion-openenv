@@ -23,16 +23,17 @@ class TaskGrader:
             env_state: The environment state dict from get_state()
 
         Returns:
-            Score between 0.0 and 1.0
+            Score strictly between 0 and 1 (open interval)
         """
         total_errors = env_state.get("total_errors", 0)
         errors_fixed = env_state.get("errors_fixed", 0)
 
         if total_errors == 0:
-            return 1.0
+            return 0.999
 
         score = errors_fixed / total_errors
-        return min(max(score, 0.0), 1.0)
+        # Clamp to (0, 1) open interval — evaluator rejects 0.0 and 1.0
+        return min(max(score, 0.001), 0.999)
 
 
 class EasyGrader(TaskGrader):

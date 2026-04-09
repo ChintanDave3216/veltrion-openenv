@@ -311,11 +311,14 @@ class DataCleanEnvironment(Environment):
             return -0.1
 
     def _calculate_score(self) -> float:
-        """Calculate current score as fraction of errors fixed."""
+        """Calculate current score as fraction of errors fixed.
+        
+        Clamped to (0, 1) open interval as required by evaluator.
+        """
         if self._total_errors == 0:
-            return 1.0
+            return 0.999
         score = len(self._fixed_errors) / self._total_errors
-        return min(max(score, 0.0), 1.0)
+        return min(max(score, 0.001), 0.999)
 
     def _build_observation(self, reward: float) -> DataCleanObservation:
         """Build the observation returned to the agent."""
