@@ -4,3 +4,22 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+
+tasks:
+  - id: "easy"
+    name: "Format Fixer"
+    description: "Fix formatting errors"
+    difficulty: "easy"
+    grader: "server.graders:easy_grader"
+    
+  - id: "medium"
+    name: "Data Quality Resolver"
+    description: "Fix data quality issues"
+    difficulty: "medium"
+    grader: "server.graders:medium_grader"
+    
+  - id: "hard"
+    name: "Consistency Auditor"
+    description: "Fix complex errors"
+    difficulty: "hard"
+    grader: "server.graders:hard_grader"
