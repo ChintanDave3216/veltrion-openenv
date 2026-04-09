@@ -316,18 +316,20 @@ class DataCleanEnvironment(Environment):
         Clamped to (0, 1) open interval as required by evaluator.
         """
         if self._total_errors == 0:
-            return 0.999
+            return 0.99
         score = len(self._fixed_errors) / self._total_errors
-        return min(max(score, 0.001), 0.999)
+        return min(max(score, 0.01), 0.99)
 
     def _build_observation(self, reward: float) -> DataCleanObservation:
         """Build the observation returned to the agent.
-        
+
         All rewards are clamped to (0, 1) open interval as required by evaluator.
+        Data is stored as first-class fields (not metadata) so serialize_observation()
+        includes them in the response sent to clients.
         """
         # Clamp reward to (0, 1) open interval — evaluator rejects 0.0 and 1.0
-        clamped_reward = round(min(max(reward, 0.001), 0.999), 4)
-        
+        clamped_reward = round(min(max(reward, 0.01), 0.99), 4)
+
         # Build visible data (exclude deleted rows)
         visible_data = []
         for i, row in enumerate(self._current_data):
@@ -339,25 +341,31 @@ class DataCleanEnvironment(Environment):
         return DataCleanObservation(
             done=self._done,
             reward=clamped_reward,
+            # First-class fields (sent to client via serialize_observation)
+            task_id=self._task_id,
+            task_description=config["description"],
+            current_data=format_as_csv(visible_data),
+            error_report=generate_error_report(
+                self._dirty_data, self._error_manifest
+            ),
+            columns=(
+                list(self._current_data[0].keys())
+                if self._current_data
+                else []
+            ),
+            total_rows=len(visible_data),
+            errors_remaining=self._total_errors - len(self._fixed_errors),
+            errors_fixed=len(self._fixed_errors),
+            total_errors=self._total_errors,
+            last_action_result=self._last_action_result,
+            score=self._calculate_score(),
+            step_count=self._state_obj.step_count,
+            max_steps=self._max_steps,
+            # Also keep in metadata for backward compatibility
             metadata={
                 "task_id": self._task_id,
-                "task_description": config["description"],
-                "current_data": format_as_csv(visible_data),
-                "error_report": generate_error_report(
-                    self._dirty_data, self._error_manifest
-                ),
-                "columns": (
-                    list(self._current_data[0].keys())
-                    if self._current_data
-                    else []
-                ),
-                "total_rows": len(visible_data),
-                "errors_remaining": self._total_errors - len(self._fixed_errors),
                 "errors_fixed": len(self._fixed_errors),
                 "total_errors": self._total_errors,
-                "last_action_result": self._last_action_result,
                 "score": self._calculate_score(),
-                "step_count": self._state_obj.step_count,
-                "max_steps": self._max_steps,
             },
         )

@@ -29,11 +29,11 @@ class TaskGrader:
         errors_fixed = env_state.get("errors_fixed", 0)
 
         if total_errors == 0:
-            return 0.999
+            return 0.99
 
         score = errors_fixed / total_errors
         # Clamp to (0, 1) open interval — evaluator rejects 0.0 and 1.0
-        return min(max(score, 0.001), 0.999)
+        return min(max(score, 0.01), 0.99)
 
 
 class EasyGrader(TaskGrader):

@@ -179,15 +179,13 @@ async def run_task(llm_client: OpenAI, env, task_id: str) -> float:
             if done:
                 break
 
-            # Get metadata from observation
+            # Get data from observation (first-class fields, not metadata)
             if isinstance(obs, dict):
-                meta = obs.get("metadata", obs)
-            elif hasattr(obs, 'metadata'):
-                meta = obs.metadata if isinstance(obs.metadata, dict) else {}
+                obs_for_llm = {"metadata": obs}  # All fields are top-level
+            elif hasattr(obs, 'model_dump'):
+                obs_for_llm = {"metadata": obs.model_dump()}
             else:
-                meta = {}
-
-            obs_for_llm = {"metadata": meta}
+                obs_for_llm = {"metadata": {}}
 
             # Get LLM action
             action, raw_response = get_model_action(llm_client, obs_for_llm, history, step)
@@ -210,24 +208,45 @@ async def run_task(llm_client: OpenAI, env, task_id: str) -> float:
             if done:
                 break
 
-        # Calculate score from metadata
+        # Calculate score from observation fields
+        # The SDK's serialize_observation sends our first-class fields as top-level keys
         if isinstance(obs, dict):
-            meta = obs.get("metadata", obs)
+            # Try observation dict directly (first-class fields)
+            errors_fixed = obs.get("errors_fixed", 0)
+            total_errors = obs.get("total_errors", 1)
+            obs_score = obs.get("score", None)
+            # Fallback: check metadata (backward compat)
+            if errors_fixed == 0 and "metadata" in obs:
+                meta = obs["metadata"]
+                errors_fixed = meta.get("errors_fixed", 0)
+                total_errors = meta.get("total_errors", 1)
+                obs_score = meta.get("score", obs_score)
+        elif hasattr(obs, 'errors_fixed'):
+            errors_fixed = obs.errors_fixed
+            total_errors = obs.total_errors
+            obs_score = obs.score if hasattr(obs, 'score') else None
         elif hasattr(obs, 'metadata'):
             meta = obs.metadata if isinstance(obs.metadata, dict) else {}
+            errors_fixed = meta.get("errors_fixed", 0)
+            total_errors = meta.get("total_errors", 1)
+            obs_score = meta.get("score", None)
         else:
-            meta = {}
+            errors_fixed = 0
+            total_errors = 1
+            obs_score = None
 
-        errors_fixed = meta.get("errors_fixed", 0)
-        total_errors = meta.get("total_errors", 1)
-        score = errors_fixed / max(total_errors, 1)
+        # Use the environment's pre-calculated score if available, else compute
+        if obs_score is not None and 0 < obs_score < 1:
+            score = obs_score
+        else:
+            score = errors_fixed / max(total_errors, 1)
         # Clamp to (0, 1) open interval — evaluator rejects 0.0 and 1.0
-        score = max(0.001, min(0.999, score))
+        score = max(0.01, min(0.99, score))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
         print(f"[DEBUG] Task {task_id} failed: {exc}", flush=True)
-        score = 0.001  # Clamp: evaluator rejects exactly 0.0
+        score = 0.01  # Clamp: evaluator rejects exactly 0.0
         success = False
 
     finally:

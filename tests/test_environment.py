@@ -104,21 +104,19 @@ class TestEnvironment:
         assert "reward" in obs
         assert "metadata" in obs
         assert obs["done"] is False
-        assert obs["reward"] == 0.001  # Clamped: never exactly 0.0
+        assert obs["reward"] == 0.01  # Clamped: never exactly 0.0
 
     def test_reset_metadata_fields(self):
-        """Reset observation contains all required metadata."""
+        """Reset observation contains all required fields."""
         obs = obs_to_dict(self.env.reset(task_id="easy", seed=42))
+        # Data is now in first-class fields (not just metadata)
+        assert obs.get("task_id") == "easy" or obs["metadata"].get("task_id") == "easy"
+        assert obs.get("total_errors") == 5 or obs["metadata"].get("total_errors") == 5
+        # Metadata still has core fields for backward compat
         meta = obs["metadata"]
         assert "task_id" in meta
-        assert "task_description" in meta
-        assert "current_data" in meta
-        assert "error_report" in meta
-        assert "errors_remaining" in meta
         assert "errors_fixed" in meta
         assert "total_errors" in meta
-        assert meta["task_id"] == "easy"
-        assert meta["total_errors"] == 5
 
     def test_reset_cleans_state(self):
         """Reset produces clean state with no prior data leakage."""
@@ -126,7 +124,7 @@ class TestEnvironment:
         self.env.step({"action_type": "done"})
         obs = obs_to_dict(self.env.reset(task_id="medium", seed=42))
         assert obs["done"] is False
-        assert obs["metadata"]["task_id"] == "medium"
+        assert obs.get("task_id") == "medium" or obs["metadata"].get("task_id") == "medium"
 
     def test_step_fix_value(self):
         """Fixing a known error gives positive reward."""
@@ -145,7 +143,7 @@ class TestEnvironment:
         """Invalid action type gives penalty."""
         self.env.reset(task_id="easy", seed=42)
         obs = obs_to_dict(self.env.step({"action_type": "invalid_action"}))
-        assert obs["reward"] == 0.001  # Clamped: negative rewards become 0.001
+        assert obs["reward"] == 0.01  # Clamped: negative rewards become 0.01
 
     def test_step_done_action(self):
         """Done action ends the episode."""
@@ -191,7 +189,7 @@ class TestEnvironment:
         """Deleting a non-duplicate row gives penalty."""
         self.env.reset(task_id="easy", seed=42)
         obs = obs_to_dict(self.env.step({"action_type": "delete_row", "row_index": 0}))
-        assert obs["reward"] == 0.001  # Clamped: negative rewards become 0.001
+        assert obs["reward"] == 0.01  # Clamped: negative rewards become 0.01
 
     def test_fix_all_errors_terminates(self):
         """Fixing all errors ends the episode."""
@@ -241,7 +239,7 @@ class TestGraders:
         env.reset(task_id="easy", seed=42)
         env.step({"action_type": "done"})
         result = grade_task("easy", env.get_state())
-        assert result["score"] == 0.001  # Clamped: never exactly 0.0
+        assert result["score"] == 0.01  # Clamped: never exactly 0.0
 
     def test_grader_perfect_score(self):
         """All errors fixed = 1.0 score."""
@@ -258,7 +256,7 @@ class TestGraders:
                     "new_value": err["clean_value"],
                 })
         result = grade_task("easy", env.get_state())
-        assert result["score"] == 0.999  # Clamped: never exactly 1.0
+        assert result["score"] == 0.99  # Clamped: never exactly 1.0
 
     def test_grader_partial_score(self):
         """Fixing some errors = partial score."""
